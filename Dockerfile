@@ -36,4 +36,4 @@ ENV PORT=7860
 ENV API_KEY=default-dev-key-change-me
 
 # Run aplikasi
-CMD ["./main"]
+CMD ["go", "run", "main.go"]
