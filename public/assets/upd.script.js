@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function uploadFile() {
     if (!selectedFile) return;
     
-    btnText.textContent = '...';
+    btnText.textContent = '';
     btnSpinner.classList.remove('hidden');
     uploadBtn.disabled = true;
     
@@ -90,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const formData = new FormData();
       formData.append('file', selectedFile);
       
-      const uploadResponse = await fetch(`/upload?api_key=${key}`, {
+      const uploadResponse = await fetch(`/upload?key=${key}`, {
         method: 'POST',
         body: formData
       });

@@ -130,9 +130,9 @@ func reloadAPIKeys() {
 
 func apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("X-API-Key")
+		apiKey := r.Header.Get("X-UPD-Key")
 		if apiKey == "" {
-			apiKey = r.URL.Query().Get("api_key")
+			apiKey = r.URL.Query().Get("key")
 		}
 		
 		keyForLog := "not_provided"
