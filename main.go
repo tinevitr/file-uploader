@@ -490,24 +490,30 @@ func updScriptSendFileHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func publicFileHandler(w http.ResponseWriter, r *http.Request) {
-    if strings.Contains(r.URL.Path, "..") {
-        http.Error(w, "Forbidden", http.StatusForbidden)
-        return
+    cleanPath := filepath.Clean(r.URL.Path)
+    
+    workDir, _ := os.Getwd()
+    publicDir := filepath.Join(workDir, "public")
+    
+    targetPath := filepath.Join(publicDir, cleanPath)
+
+    info, err := os.Stat(targetPath)
+    if err == nil && info.IsDir() {
+        targetPath = filepath.Join(targetPath, "index.html")
     }
-    
-    path := "./public" + r.URL.Path
-    
-    if r.URL.Path == "" || r.URL.Path == "/" {
-        path = "./public/index.html"
-    }
-    
-    if _, err := os.Stat(path); os.IsNotExist(err) {
+
+    if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+        fmt.Printf("🔍 Debug: File not found at %s\n", targetPath)
         http.NotFound(w, r)
         return
     }
+
+    w.Header().Set("X-Content-Type-Options", "nosniff")
+    w.Header().Set("Cache-Control", "no-store")
     
-    http.ServeFile(w, r, path)
+    http.ServeFile(w, r, targetPath)
 }
+
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
