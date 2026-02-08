@@ -2,8 +2,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/hex"
-	"encoding/json"
 	"math/rand"
 	"fmt"
 	"io"
