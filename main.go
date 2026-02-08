@@ -2,9 +2,9 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math/rand"
 	"fmt"
 	"io"
 	"net/http"
