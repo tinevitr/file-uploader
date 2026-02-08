@@ -163,9 +163,22 @@ func apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func generateFilename(originalName string) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+
+	const minLength = 4
+	const maxLength = 6
+
 	ext := filepath.Ext(originalName)
-	hash := sha256.Sum256([]byte(originalName + time.Now().String() + fmt.Sprintf("%d", time.Now().UnixNano())))
-	return hex.EncodeToString(hash[:])[:10] + ext
+
+	rand.Seed(time.Now().UnixNano())
+	length := rand.Intn(maxLength-minLength+1) + minLength
+
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+
+	return string(b) + ext
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
@@ -613,5 +626,6 @@ func main() {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
 	}
 }
+
 
 
