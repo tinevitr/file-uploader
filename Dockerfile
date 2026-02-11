@@ -22,9 +22,8 @@ COPY --from=builder /app/public ./public
 
 RUN mkdir -p uploads
 
-EXPOSE 7860
+EXPOSE 8080
 
 ENV PORT=7860
-ENV API_KEY=default-dev-key-change-me
 
 CMD ["./main"]

@@ -63,4 +63,20 @@ type ReloadKeysResponse struct {
 	KeysCount int    `json:"keys_count"`
 }
 
+type TempKeyResponse struct {
+	Success   bool   `json:"success"`
+	Key       string `json:"key"`
+	ExpiresIn string `json:"expires_in"`
+	Expiry    string `json:"expiry"`
+	Message   string `json:"message"`
+	Usage     string `json:"usage"`
+	KeysCount int    `json:"keys_count"`
+	KeyLength int    `json:"key_length"`
+	Bytes     int    `json:"bytes"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
 
