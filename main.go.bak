@@ -13,40 +13,18 @@ import (
 	"sync"
 	"time"
 	"upd/common/types"
-	crand "crypto/rand"
-	"encoding/hex"
-	"github.com/go-redis/redis/v8"
-	"context"
-	"strconv"
 )
 
 const (
 	MAX_UPLOAD_SIZE = 100 << 20
 	UPLOAD_DIR      = "./uploads"
 	ENV_FILE        = ".env"
-	COUNTDOWN_DAYS  = 25
 )
 
 var (
 	API_KEYS   = make(map[string]bool)
 	PORT       string
 	keysMutex  sync.RWMutex
-)
-
-// Struct untuk menyimpan key sementara dengan expiry time
-type tempKey struct {
-	Key    string
-	Expiry time.Time
-}
-
-var (
-	tempKeys     = make(map[string]tempKey)
-	tempKeysLock sync.RWMutex
-)
-
-var (
-	redisClient *redis.Client
-	ctx         = context.Background()
 )
 
 func init() {
@@ -58,131 +36,9 @@ func init() {
 		PORT = "7860"
 	}
 	
-	// Seed untuk math/rand (digunakan di fungsi lain seperti generateFilename)
-	rand.Seed(time.Now().UnixNano())
-	
 	fmt.Printf("🔑 Loaded %d API keys\n", len(API_KEYS))
 	if len(API_KEYS) == 0 {
 		fmt.Println("⚠️  Warning: No API keys loaded! Add API_KEY=yourkey to .env file")
-	}
-
-	initRedis()
-	
-	// Bersihkan key yang expired setiap 5 menit
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		
-		for range ticker.C {
-			cleanExpiredKeys()
-		}
-	}()
-}
-
-func initRedis() {
-	redisURL := "redis://default:CrRppNmTZsmlBvFYGFpAKujvahhNMyxb@maglev.proxy.rlwy.net:47225"
-	
-	opt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		fmt.Printf("❌ Failed to parse Redis URL: %v\n", err)
-		return
-	}
-	
-	redisClient = redis.NewClient(opt)
-	
-	// Test connection
-	_, err = redisClient.Ping(ctx).Result()
-	if err != nil {
-		fmt.Printf("❌ Redis connection failed: %v\n", err)
-		fmt.Println("⚠️  Countdown will use fallback value")
-	} else {
-		fmt.Println("✅ Redis connected successfully")
-		
-		// Initialize countdown if not exists
-		initCountdown()
-	}
-}
-
-func initCountdown() {
-	exists, err := redisClient.Exists(ctx, "upd:cd").Result()
-	if err != nil {
-		fmt.Printf("❌ Failed to check Redis key: %v\n", err)
-		return
-	}
-	
-	if exists == 0 {
-		// Set initial countdown dengan timestamp
-		initialCountdown := COUNTDOWN_DAYS * 24 * 60 * 60 // dalam detik
-		startTime := time.Now().Unix() // timestamp saat server start
-		endTime := startTime + int64(initialCountdown)
-		
-		// Simpan end timestamp ke Redis
-		err := redisClient.Set(ctx, "upd:cd", endTime, 0).Err()
-		if err != nil {
-			fmt.Printf("❌ Failed to initialize countdown: %v\n", err)
-		} else {
-			fmt.Printf("✅ Countdown initialized to %d days (ends at: %s)\n", 
-				COUNTDOWN_DAYS, time.Unix(endTime, 0).Format("2006-01-02 15:04:05"))
-		}
-	} else {
-		// Log current end time
-		endTimeStr, err := redisClient.Get(ctx, "upd:cd").Result()
-		if err != nil {
-			fmt.Printf("❌ Failed to get countdown: %v\n", err)
-		} else {
-			endTime, _ := strconv.ParseInt(endTimeStr, 10, 64)
-			remainingSeconds := calculateRemainingSeconds(endTime)
-			days, hours, minutes, seconds := secondsToDHMS(remainingSeconds)
-			
-			fmt.Printf("📊 Current countdown: %d days %d hours %d minutes %d seconds\n", 
-				days, hours, minutes, seconds)
-		}
-	}
-}
-
-func calculateRemainingSeconds(endTime int64) int64 {
-	now := time.Now().Unix()
-	remaining := endTime - now
-	
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
-}
-
-func secondsToDHMS(totalSeconds int64) (days, hours, minutes, seconds int64) {
-	days = totalSeconds / (24 * 60 * 60)
-	remainingSeconds := totalSeconds % (24 * 60 * 60)
-	hours = remainingSeconds / (60 * 60)
-	remainingSeconds %= 60 * 60
-	minutes = remainingSeconds / 60
-	seconds = remainingSeconds % 60
-	
-	return
-}
-
-func cleanExpiredKeys() {
-	tempKeysLock.Lock()
-	defer tempKeysLock.Unlock()
-	
-	now := time.Now()
-	cleaned := 0
-	
-	for key, temp := range tempKeys {
-		if temp.Expiry.Before(now) {
-			delete(tempKeys, key)
-			
-			// Juga hapus dari API_KEYS
-			keysMutex.Lock()
-			delete(API_KEYS, key)
-			keysMutex.Unlock()
-			
-			cleaned++
-		}
-	}
-	
-	if cleaned > 0 {
-		fmt.Printf("[TEMP KEYS] 🗑️  Cleaned %d expired temporary keys\n", cleaned)
 	}
 }
 
@@ -500,37 +356,6 @@ func filesHandler(w http.ResponseWriter, r *http.Request) {
 	io.CopyN(w, file, contentLength)
 }
 
-func countdownHandler(w http.ResponseWriter, r *http.Request) {
-	// Default fallback value
-	remainingSeconds := int64(COUNTDOWN_DAYS * 24 * 60 * 60)
-	
-	// Try to get from Redis
-	if redisClient != nil {
-		endTimeStr, err := redisClient.Get(ctx, "upd:cd").Result()
-		if err == nil {
-			endTime, _ := strconv.ParseInt(endTimeStr, 10, 64)
-			remainingSeconds = calculateRemainingSeconds(endTime)
-		}
-	}
-	
-	// Calculate days, hours, minutes, seconds
-	days, hours, minutes, seconds := secondsToDHMS(remainingSeconds)
-	
-	// Format output dengan format yang bersih
-	output := fmt.Sprintf("%d hari %d jam %d menit %d detik", 
-		days, hours, minutes, seconds)
-	
-	// Log request
-	clientIP := strings.Split(r.RemoteAddr, ":")[0]
-	fmt.Printf("[COUNTDOWN] 📊 Request from %s | Remaining: %d days %d hours %d minutes %d seconds\n", 
-		clientIP, days, hours, minutes, seconds)
-	
-	// Set header dan kirim response
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-	w.Write([]byte(output))
-}
-
 func statsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	
@@ -646,82 +471,6 @@ func keysHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func tempKeyHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	
-	if r.Method != http.MethodPost {
-		response := types.ErrorResponse{
-			Error: "Method not allowed",
-		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-	
-	// Generate 32 bytes random key seperti crypto.randomBytes(32) di Node.js
-	keyBytes := make([]byte, 32)
-	_, err := crand.Read(keyBytes)
-	if err != nil {
-		response := types.ErrorResponse{
-			Error: "Failed to generate secure key",
-		}
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(response)
-		fmt.Printf("[TEMP KEYS] ❌ Failed to generate secure key: %v\n", err)
-		return
-	}
-	
-	// Encode ke hex (seperti Node.js buffer.toString('hex'))
-	generatedKey := hex.EncodeToString(keyBytes) // 64 karakter hex
-	expiry := time.Now().Add(15 * time.Minute)
-	
-	// Simpan key sementara
-	tempKeysLock.Lock()
-	tempKeys[generatedKey] = tempKey{
-		Key:    generatedKey,
-		Expiry: expiry,
-	}
-	
-	// Tambahkan ke API_KEYS
-	keysMutex.Lock()
-	API_KEYS[generatedKey] = true
-	keysCount := len(API_KEYS)
-	keysMutex.Unlock()
-	
-	tempKeysLock.Unlock()
-	
-	// Log format yang aman (tampilkan 8 karakter terakhir)
-	keyForLog := "***"
-	if len(generatedKey) > 8 {
-		keyForLog = "***" + generatedKey[len(generatedKey)-8:]
-	} else if len(generatedKey) > 0 {
-		keyForLog = "***" + generatedKey
-	}
-	
-	fmt.Printf("[TEMP KEYS] ➕ Generated temporary key: %s (expires: %s)\n",
-		keyForLog,
-		expiry.Format("15:04:05"))
-	
-	// Juga tampilkan full key untuk keperluan debugging (opsional)
-	if os.Getenv("DEBUG") == "true" {
-		fmt.Printf("[TEMP KEYS] 🔍 DEBUG - Full key: %s\n", generatedKey)
-	}
-	
-	response := types.TempKeyResponse{
-		Success:    true,
-		Key:        generatedKey,
-		ExpiresIn:  "15 minutes",
-		Expiry:     expiry.Format("2006-01-02 15:04:05"),
-		Message:    "Temporary key generated successfully. Use in X-API-Key header.",
-		Usage:      "This key will automatically expire after 15 minutes.",
-		KeysCount:  keysCount,
-		KeyLength:  len(generatedKey), // akan menjadi 64 karakter
-		Bytes:      32,                // bytes asli sebelum encoding
-	}
-	
-	json.NewEncoder(w).Encode(response)
-}
-
 func updScriptSendFileHandler(w http.ResponseWriter, r *http.Request) {
     filePath := "./public/assets/upd.script.js"
     
@@ -777,6 +526,7 @@ func publicFileHandler(w http.ResponseWriter, r *http.Request) {
     http.ServeFile(w, r, targetPath)
 }
 
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	
@@ -795,12 +545,8 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
     Endpoints: []string{
         "POST /upload (with API key)",
         "GET  /files/{filename}",
-        "GET  /files/cd (countdown)",
         "GET  /stats (with API key)",
         "GET  /health",
-        "POST /addkey/temp (generate temp key)",
-        "POST /keys/add (add temporary key)",
-        "POST /keys/reload (reload from .env)",
     },
   }
 	
@@ -819,15 +565,38 @@ func main() {
 	http.HandleFunc("/stats", apiKeyMiddleware(statsHandler))
 	http.HandleFunc("/keys/reload", apiKeyMiddleware(reloadKeysHandler))
 	http.HandleFunc("/keys/add", keysHandler)
-	http.HandleFunc("/addkey/temp", tempKeyHandler)
 	
 	http.HandleFunc("/f/", filesHandler)
-	http.HandleFunc("/files/cd", countdownHandler)
 	http.HandleFunc("/health", healthHandler)
 	
 	http.HandleFunc("/upd/script", updScriptSendFileHandler)
 	http.HandleFunc("/", publicFileHandler)
 
+	/*
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    if r.URL.Path != "/" {
+        http.NotFound(w, r)
+        return
+    }
+    
+    response := types.RootResponse{
+      Service:       "tine-upd",
+      Version:       "2.0",
+      Features:      []string{
+        "Hot-reload API keys",
+        "File upload up to 100MB",
+        "Secure API key validation",
+        "Built with Go and super fast",
+      },
+      ContactAdmin:  "https://nvlabs.my.id",
+      Documentation: "Check /health endpoint for available endpoints",
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
+  })
+  */
+  
 	fmt.Println("=" + strings.Repeat("=", 60))
 	fmt.Println("🚀 File Upload Server v2.0")
 	fmt.Println("📌 Port:", PORT)
@@ -843,10 +612,8 @@ func main() {
 	
 	fmt.Println("\n📤 Upload: POST /upload (with API key)")
 	fmt.Println("📥 Download: GET /f/{filename}")
-	fmt.Println("⏰ Countdown: GET /files/cd")
 	fmt.Println("📊 Stats: GET /stats (with API key)")
 	fmt.Println("🔧 Manage Keys: POST /keys/add (add temporary key)")
-	fmt.Println("🔑 Generate Temp Key: POST /addkey/temp (15 minutes expiry)")
 	fmt.Println("🔄 Reload Keys: POST /keys/reload (reload from .env)")
 	fmt.Println("❤️  Health: GET /health")
 	fmt.Println()
@@ -858,4 +625,7 @@ func main() {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
 	}
 }
+
+
+
 
